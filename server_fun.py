@@ -83,11 +83,25 @@ def random_joke() -> Dict[str, Any]:
 # Dog photo (Dog CEO)
 # ──────────────────────────────────────────────
 @mcp.tool()
-def random_dog() -> Dict[str, Any]:
-    """Return a random dog image URL from the Dog CEO API."""
-    r = requests.get("https://dog.ceo/api/breeds/image/random", timeout=20)
-    r.raise_for_status()
-    return r.json()
+def random_dog(media_type: str = "image") -> Dict[str, Any]:
+    """Return a random dog image or video URL.
+    
+    Args:
+        media_type: Request either 'image' (returns only photos) or 'video' (returns only mp4/webm videos). Defaults to 'image'.
+    """
+    for _ in range(10):
+        r = requests.get("https://random.dog/woof.json", timeout=20)
+        r.raise_for_status()
+        url = r.json().get("url", "")
+        url_lower = url.lower()
+        is_video = url_lower.endswith(('.mp4', '.webm'))
+        
+        if media_type == "video" and is_video:
+            return {"url": url}
+        elif media_type == "image" and not is_video:
+            return {"url": url}
+            
+    return {"url": "Could not find the requested media type, please try again."}
 
 
 # ──────────────────────────────────────────────
@@ -95,7 +109,7 @@ def random_dog() -> Dict[str, Any]:
 # ──────────────────────────────────────────────
 @mcp.tool()
 def trivia() -> Dict[str, Any]:
-    """Return one multiple-choice trivia question from Open Trivia DB."""
+    """Return one multiple-choice trivia question from Open Trivia DB. The result is a pre-formatted trivia card. You MUST copy the 'trivia_card' text EXACTLY into your final answer. Do NOT answer the question yourself."""
     r = requests.get(
         "https://opentdb.com/api.php?amount=1&type=multiple", timeout=20
     )
@@ -104,10 +118,24 @@ def trivia() -> Dict[str, Any]:
     if not data:
         return {"error": "no trivia"}
     q = data[0]
-    q["question"] = html.unescape(q["question"])
-    q["correct_answer"] = html.unescape(q["correct_answer"])
-    q["incorrect_answers"] = [html.unescape(x) for x in q["incorrect_answers"]]
-    return q
+
+    import random
+    question = html.unescape(q["question"])
+    correct = html.unescape(q["correct_answer"])
+    options = [html.unescape(x) for x in q["incorrect_answers"]] + [correct]
+    random.shuffle(options)
+    labels = ["A", "B", "C", "D"]
+
+    card = f"🧠 **Trivia Time!**\n\n{question}\n\n"
+    for label, opt in zip(labels, options):
+        card += f"  {label}) {opt}\n"
+    card += "\nWhat's your guess?"
+
+    return {
+        "trivia_card": card,
+        "correct_answer": correct,
+        "instruction": "Copy the trivia_card text EXACTLY into your final answer. Do NOT answer the question. Do NOT add any facts. Just present the card and ask the user to guess."
+    }
 
 
 # ──────────────────────────────────────────────

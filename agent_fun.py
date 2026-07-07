@@ -67,9 +67,8 @@ SYSTEM = (
     "estimate its latitude/longitude coordinates).\n"
     "- If a user asks for weather in a clearly invalid or nonsense location, you should STILL attempt "
     "to call get_weather using default coordinates (e.g. 0.0, 0.0) so you fulfill the tool requirement.\n"
-    "- If the user asks for a trivia question, present the question and the multiple "
-    "choice options to them! EXTREMELY IMPORTANT: DO NOT include the correct answer in your response! Hide it completely!\n"
-    "- When providing a dog photo, you MUST include the actual image URL in your final answer.\n"
+    "- TRIVIA RULE: When the trivia tool returns a 'trivia_card', you MUST copy that trivia_card text into your final answer EXACTLY as-is. Do NOT answer the trivia question. Do NOT summarize it into a fact. Do NOT add your own knowledge. Just relay the card.\n"
+    "- When providing a dog photo or video, you MUST include the actual URL in your final answer.\n"
     "- Use real data from tool results in your final answer.\n"
     "- Keep answers concise, upbeat, and formatted nicely.\n"
     "- Never invent data you haven't fetched from a tool.\n"
@@ -128,7 +127,15 @@ def llm_json(messages: List[Dict[str, str]]) -> Dict[str, Any]:
 # One-shot reflection
 # ──────────────────────────────────────────────
 def reflect(answer: str) -> str:
-    """Ask a second LLM pass to catch mistakes or improve the answer."""
+    """Ask a second LLM pass to catch mistakes or improve the answer.
+    
+    Conservative: only replaces if the review is a short, targeted fix.
+    Skips reflection for short conversational answers to avoid over-editing.
+    """
+    # Skip reflection for short answers (greetings, trivia evaluations, etc.)
+    if len(answer) < 300:
+        return answer
+
     resp = client.chat.completions.create(
         model=MODEL,
         messages=[
@@ -136,8 +143,9 @@ def reflect(answer: str) -> str:
                 "role": "system",
                 "content": (
                     "You are an AI assistant evaluating the draft response of a weekend planner agent. "
-                    "If the draft response is a greeting, friendly chat, or a valid answer, reply EXACTLY: looks good\n"
-                    "Only if the draft response contains obvious factual contradictions or broken formatting, reply with a corrected version."
+                    "If the draft response is acceptable, reply EXACTLY AND ONLY with the word: PASS\n"
+                    "Only if the draft contains obvious factual contradictions or broken formatting, "
+                    "reply with a corrected version that is similar in length to the original."
                 ),
             },
             {"role": "user", "content": answer},
@@ -146,7 +154,10 @@ def reflect(answer: str) -> str:
         max_tokens=1024,
     )
     review = resp.choices[0].message.content.strip()
-    if review.lower() == "looks good":
+    if "PASS" in review:
+        return answer
+    # Only accept the correction if it's not way longer than the original
+    if len(review) > len(answer) * 1.5:
         return answer
     return review
 
@@ -367,8 +378,25 @@ async def main():
                 except Exception as e:
                     payload = json.dumps({"error": str(e)})
 
+                # ── Trivia shortcut: display card directly, bypass LLM ──
+                if tname == "trivia":
+                    try:
+                        trivia_data = json.loads(payload)
+                        card = trivia_data.get("trivia_card", "")
+                        if card:
+                            show_agent_answer(card)
+                            history.append({"role": "assistant", "content": card})
+                            # Store the correct answer so the AI can check guesses later
+                            correct = trivia_data.get("correct_answer", "")
+                            if correct:
+                                history.append({"role": "user", "content": f"(System note: The correct answer to the trivia question above is '{correct}'. When the user guesses, tell them if they are right or wrong and reveal the correct answer. Do NOT call the trivia tool again unless the user explicitly asks for a NEW question.)"})
+                            final_answer = card
+                            break
+                    except (json.JSONDecodeError, KeyError):
+                        pass  # fall through to normal LLM handling
+
                 # Feed observation back into history as user/system prompt
-                observation = f"Tool result for {tname}: {payload}\nNow output the final answer using 'action': 'final'."
+                observation = f"Tool result for {tname}: {payload}\nNow output the final response to the user using 'action': 'final'."
                 show_tool_result(len(payload))
                 history.append({"role": "user", "content": observation})
             else:
